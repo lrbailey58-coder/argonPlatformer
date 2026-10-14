@@ -9,6 +9,7 @@ Player::Player(float x, float y) {
     
     isGrounded = false;
     isCrouching = false;
+    isCharging = false;
     
     moveSpeed = 300.0f;
     crouchSpeed = 150.0f; // Half speed while crouching on the ground
@@ -16,7 +17,7 @@ Player::Player(float x, float y) {
     jumpForce = -540.0f;
     gravity = 1100.0f;
 
-    // 0.12 seconds (~7 frames at 60 FPS) is the sweet spot for platformer responsiveness
+    // 0.12 seconds (~7 frames at 60 FPS)
     coyoteTimeDuration = 0.12f;
     coyoteTimer = 0.0f;
     jumpBufferDuration = 0.12f;
@@ -56,17 +57,24 @@ void Player::Update(float dt, const std::vector<Rectangle>& platforms) {
     }
 
     // 3. Horizontal Input
-    float currentSpeed = isGrounded ? (isCrouching ? crouchSpeed : moveSpeed) : airSpeed;
+    if (isCharging) {
+        // Cannot move on the ground while charging; keep existing momentum if airborne!
+        if (isGrounded) {
+            velocity.x = 0.0f;
+        }
+    } else {
+        float currentSpeed = isGrounded ? (isCrouching ? crouchSpeed : moveSpeed) : airSpeed;
 
-    velocity.x = 0.0f;
-    if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
-        velocity.x -= currentSpeed;
-    }
-    if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) {
-        velocity.x += currentSpeed;
+        velocity.x = 0.0f;
+        if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
+            velocity.x -= currentSpeed;
+        }
+        if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) {
+            velocity.x += currentSpeed;
+        }
     }
 
-    // 4. Jump Buffering, Coyote Jump & Variable Jump Height
+    // 4. Jump Buffering, Coyote Jump & Variable Jump Height (Still allowed while charging!)
     bool jumpPressed = IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W) || IsKeyPressed(KEY_SPACE);
     bool jumpHeld = IsKeyDown(KEY_UP) || IsKeyDown(KEY_W) || IsKeyDown(KEY_SPACE);
 
@@ -80,8 +88,6 @@ void Player::Update(float dt, const std::vector<Rectangle>& platforms) {
     if (jumpBufferTimer > 0.0f && coyoteTimer > 0.0f) {
         velocity.y = jumpForce;
         isGrounded = false;
-        
-        // Consume both timers immediately so the player cannot double-jump
         coyoteTimer = 0.0f;
         jumpBufferTimer = 0.0f;
     }
@@ -100,8 +106,10 @@ void Player::Update(float dt, const std::vector<Rectangle>& platforms) {
         if (CheckCollisionRecs(rect, plat)) {
             if (velocity.x > 0) {
                 rect.x = plat.x - rect.width;
+                if (isCharging) velocity.x = 0.0f; // Stop air momentum if slamming into a wall
             } else if (velocity.x < 0) {
                 rect.x = plat.x + plat.width;
+                if (isCharging) velocity.x = 0.0f;
             }
         }
     }

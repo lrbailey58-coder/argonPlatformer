@@ -3,6 +3,7 @@
 #include "Player.h"
 #include "Level.h"
 #include "GameCamera.h"
+#include "Ball.h"
 
 int main() {
     const int screenWidth = 960;
@@ -13,22 +14,33 @@ int main() {
 
     Level level1;
     Player player(80, 1000); // Start near the bottom-left of the map
+    Ball ball;
+    ball.Reset(player);
+
     GameCamera camera(screenWidth, screenHeight, { player.rect.x, player.rect.y });
-    
-    // Snap camera inside map bounds on the first frame
     camera.Update(0.0f, player, level1.mapWidth, level1.mapHeight);
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
 
         if (!level1.levelWon) {
+            // Convert screen mouse coordinates into scrolling world coordinates
+            Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera.cam);
+
+            // Update ball charge/throw state and player physics
+            ball.Update(dt, player, level1.platforms, mouseWorldPos);
             player.Update(dt, level1.platforms);
+
+            // Keep the held ball indicator synced to the player's updated position
+            ball.SyncWithPlayer(player, mouseWorldPos, level1.platforms);
+
             camera.Update(dt, player, level1.mapWidth, level1.mapHeight);
             level1.CheckWin(player.rect);
         } else {
             if (IsKeyPressed(KEY_R)) {
                 level1.Reset();
                 player = Player(80, 1000);
+                ball.Reset(player);
                 camera = GameCamera(screenWidth, screenHeight, { player.rect.x, player.rect.y });
                 camera.Update(0.0f, player, level1.mapWidth, level1.mapHeight);
             }
@@ -42,10 +54,11 @@ int main() {
         BeginMode2D(camera.cam);
             level1.Draw();
             player.Draw();
+            ball.Draw(player);
         EndMode2D();
 
-        // 2. Draw Fixed UI Overlay (Stays on screen regardless of camera position)
-        DrawText("Move: A/D or Left/Right | Crouch: S/Down | Jump: W/Up/Space", 20, 20, 20, DARKBLUE);
+        // 2. Draw Fixed UI Overlay
+        DrawText("Move: A/D | Crouch: S | Jump: W/Space | Hold Left Click: Charge & Throw Ball", 20, 20, 20, DARKBLUE);
 
         if (level1.levelWon) {
             DrawRectangle(0, 0, screenWidth, screenHeight, Fade(BLACK, 0.6f));
