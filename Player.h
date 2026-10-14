@@ -11,6 +11,7 @@ public:
     Vector2 velocity;
     bool isGrounded;
     bool isCrouching;
+    bool isCharging;
     
     float normalHeight;
     float crouchHeight;
