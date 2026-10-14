@@ -51,8 +51,7 @@ Ensure all six source files are in the same directory:
 # How to Compile and Run
 
 Open PowerShell (or your MSYS2 terminal) inside the project folder and run:
-```PowerShell
-
+```
 g++ main.cpp Player.cpp Ball.cpp -o game.exe -lraylib -lopengl32 -lgdi32 -lwinmm
 
 ```
@@ -61,7 +60,6 @@ g++ main.cpp Player.cpp Ball.cpp -o game.exe -lraylib -lopengl32 -lgdi32 -lwinmm
 
 Launch the game:
 
-```PowerShell
-
+```
 ./game.exe
 ```
