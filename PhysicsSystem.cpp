@@ -12,10 +12,10 @@ void PhysicsSystem::UpdateWorld(float dt, WorldState& world) {
         return;
     }
 
-    // 1. Update Ball state (charging, firing, or bouncing)
-    UpdateBall(dt, world.ball, world.player, world.input, world.level.platforms);
+    // 1. Update Ball state (charging, firing, bouncing, and hoop scoring)
+    UpdateBall(dt, world.ball, world.player, world.level, world.input);
 
-    // 2. Update Player physics and movement
+    // 2. Update Player physics and movement (Player does not collide with hoops)
     UpdatePlayer(dt, world.player, world.input, world.level.platforms);
 
     // 3. Re-sync held ball indicator to the player's new post-movement position
@@ -23,11 +23,6 @@ void PhysicsSystem::UpdateWorld(float dt, WorldState& world) {
 
     // 4. Update Smooth Deadzone Camera
     UpdateCamera(dt, world);
-
-    // 5. Check Victory Condition
-    if (CheckCollisionRecs(world.player.rect, world.level.flagPole)) {
-        world.level.levelWon = true;
-    }
 }
 
 void PhysicsSystem::UpdatePlayer(float dt, PlayerData& player, const InputState& input, const std::vector<Rectangle>& platforms) {
@@ -146,7 +141,6 @@ void PhysicsSystem::SyncBallWithPlayer(BallData& ball, const PlayerData& player,
         dir = { 1.0f, 0.0f };
     }
 
-    // Step outward up to 18.0f, stopping before clipping into any floor or wall
     float maxOrbitRadius = 18.0f;
     Vector2 safePos = playerCenter;
 
@@ -201,7 +195,83 @@ void PhysicsSystem::ResolveBallPlatformCollision(BallData& ball, const Rectangle
     }
 }
 
-void PhysicsSystem::UpdateBall(float dt, BallData& ball, PlayerData& player, const InputState& input, const std::vector<Rectangle>& platforms) {
+void PhysicsSystem::ResolveBallCircleCollision(BallData& ball, Vector2 circleCenter, float circleRadius) {
+    float dx = ball.pos.x - circleCenter.x;
+    float dy = ball.pos.y - circleCenter.y;
+    float distSq = dx * dx + dy * dy;
+    float minDist = ball.radius + circleRadius;
+
+    if (distSq < minDist * minDist) {
+        float dist = std::sqrt(distSq);
+        Vector2 normal = (dist > 0.0001f) ? Vector2{ dx / dist, dy / dist } : Vector2{ 0.0f, -1.0f };
+
+        // Push the ball out of the purple rim circle
+        float overlap = minDist - dist;
+        ball.pos.x += normal.x * overlap;
+        ball.pos.y += normal.y * overlap;
+
+        // Reflect velocity vector off the circular rim
+        float velDotNormal = ball.velocity.x * normal.x + ball.velocity.y * normal.y;
+        if (velDotNormal < 0.0f) {
+            ball.velocity.x -= (1.0f + ball.bounciness) * velDotNormal * normal.x;
+            ball.velocity.y -= (1.0f + ball.bounciness) * velDotNormal * normal.y;
+        }
+    }
+}
+
+void PhysicsSystem::HandleHoopInteraction(BallData& ball, Vector2 prevBallPos, HoopData& hoop, LevelData& level) {
+    if (hoop.cleared) return;
+
+    // 1. Bounce the ball off the two circular purple rim dots
+    ResolveBallCircleCollision(ball, hoop.GetLeftRimPos(), hoop.rimRadius);
+    ResolveBallCircleCollision(ball, hoop.GetRightRimPos(), hoop.rimRadius);
+
+    // 2. Compute ball coordinates in the hoop's local rotated reference frame
+    Vector2 tangent = hoop.GetTangent();
+    Vector2 shotDir = hoop.GetShotDirection(); // Valid scoring direction
+
+    Vector2 relPrev = { prevBallPos.x - hoop.center.x, prevBallPos.y - hoop.center.y };
+    Vector2 relCurr = { ball.pos.x - hoop.center.x, ball.pos.y - hoop.center.y };
+
+    // Signed distance along the shot direction (negative = entry/top side, positive = exit/bottom side)
+    float prevNormalDist = relPrev.x * shotDir.x + relPrev.y * shotDir.y;
+    float currNormalDist = relCurr.x * shotDir.x + relCurr.y * shotDir.y;
+
+    // Lateral distance from the center of the hoop opening
+    float currTangentDist = relCurr.x * tangent.x + relCurr.y * tangent.y;
+    float halfOpening = hoop.openingWidth / 2.0f;
+
+    // Check if the ball is laterally within the hoop's opening
+    if (std::fabs(currTangentDist) <= halfOpening) {
+        // Case A: Ball crosses the hoop center-line in the VALID direction (from <= 0 to > 0)
+        if (prevNormalDist <= 0.0f && currNormalDist > 0.0f) {
+            hoop.cleared = true;
+            level.hoopsCleared++;
+            if (level.hoopsCleared >= level.totalHoops) {
+                level.levelWon = true;
+            }
+            return;
+        }
+
+        // Case B: One-way block! If the ball approaches from the WRONG side (currNormalDist > 0)
+        // and tries to enter the hoop opening moving against shotDir, bounce it back out!
+        float velAlongShot = ball.velocity.x * shotDir.x + ball.velocity.y * shotDir.y;
+        if (prevNormalDist > 0.0f && currNormalDist < ball.radius && velAlongShot < 0.0f) {
+            // Push ball flush to the back/bottom of the hoop plane
+            float pushOut = ball.radius - currNormalDist;
+            ball.pos.x += shotDir.x * pushOut;
+            ball.pos.y += shotDir.y * pushOut;
+
+            // Reflect velocity component along the hoop normal
+            ball.velocity.x -= (1.0f + ball.bounciness) * velAlongShot * shotDir.x;
+            ball.velocity.y -= (1.0f + ball.bounciness) * velAlongShot * shotDir.y;
+        }
+    }
+}
+
+void PhysicsSystem::UpdateBall(float dt, BallData& ball, PlayerData& player, LevelData& level, const InputState& input) {
+    const auto& platforms = level.platforms;
+
     if (ball.isHeld) {
         SyncBallWithPlayer(ball, player, input.mouseWorldPos, platforms);
 
@@ -255,13 +325,22 @@ void PhysicsSystem::UpdateBall(float dt, BallData& ball, PlayerData& player, con
         float subDt = dt / (float)subSteps;
 
         for (int step = 0; step < subSteps; step++) {
+            Vector2 prevBallPos = ball.pos;
+
             ball.pos.x += ball.velocity.x * subDt;
             ball.pos.y += ball.velocity.y * subDt;
 
+            // 1. Platform Collisions
             for (const auto& plat : platforms) {
                 ResolveBallPlatformCollision(ball, plat);
             }
 
+            // 2. Hoop Collisions & One-Way Scoring (Only when ball is thrown!)
+            for (auto& hoop : level.hoops) {
+                HandleHoopInteraction(ball, prevBallPos, hoop, level);
+            }
+
+            // 3. Player Hitbox-Exit & Pickup Check
             if (!ball.hasLeftPlayer) {
                 if (!CheckCollisionCircleRec(ball.pos, ball.radius, player.rect)) {
                     ball.hasLeftPlayer = true;
@@ -295,7 +374,6 @@ void PhysicsSystem::UpdateCamera(float dt, WorldState& world) {
     float halfBoxW = camData.centerBoxWidth / 2.0f;
     float halfBoxH = camData.centerBoxHeight / 2.0f;
 
-    // Horizontal Camera Follow
     bool movingAwayX = (diffX > halfBoxW && player.velocity.x > 0) ||
                        (diffX < -halfBoxW && player.velocity.x < 0);
 
@@ -310,7 +388,6 @@ void PhysicsSystem::UpdateCamera(float dt, WorldState& world) {
     }
     camData.cam.target.x += diffX * camData.baseFollowSpeed * dt;
 
-    // Vertical Camera Follow
     bool movingAwayY = (diffY > halfBoxH && player.velocity.y > 0) ||
                        (diffY < -halfBoxH && player.velocity.y < 0);
 
@@ -325,7 +402,6 @@ void PhysicsSystem::UpdateCamera(float dt, WorldState& world) {
     }
     camData.cam.target.y += diffY * camData.baseFollowSpeed * dt;
 
-    // Clamp to Map Edges
     float minCamX = camData.screenWidth / 2.0f;
     float maxCamX = world.level.mapWidth - (camData.screenWidth / 2.0f);
     float minCamY = camData.screenHeight / 2.0f;

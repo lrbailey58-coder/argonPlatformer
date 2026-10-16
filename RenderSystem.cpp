@@ -9,6 +9,7 @@ void RenderSystem::Render(const WorldState& world) {
     // 1. Render Scrolling 2D World
     BeginMode2D(world.camera.cam);
         DrawLevel(world.level);
+        DrawHoops(world.level);
         DrawPlayer(world.player);
         DrawBallAndChargeBar(world.ball, world.player);
     EndMode2D();
@@ -33,15 +34,40 @@ void RenderSystem::DrawLevel(const LevelData& level) {
         DrawRectangleRec(plat, DARKGRAY);
         DrawRectangleLinesEx(plat, 2, BLACK);
     }
+}
 
-    // Victory Flag
-    DrawRectangleRec(level.flagPole, GOLD);
-    DrawTriangle(
-        { level.flagPole.x + 10, level.flagPole.y },
-        { level.flagPole.x + 10, level.flagPole.y + 35 },
-        { level.flagPole.x + 55, level.flagPole.y + 17 },
-        GREEN
-    );
+void RenderSystem::DrawHoops(const LevelData& level) {
+    for (const auto& hoop : level.hoops) {
+        // Cleared hoops turn completely invisible
+        if (hoop.cleared) continue;
+
+        Vector2 leftRim  = hoop.GetLeftRimPos();
+        Vector2 rightRim = hoop.GetRightRimPos();
+        Vector2 tangent  = hoop.GetTangent();
+        Vector2 shotDir  = hoop.GetShotDirection();
+
+        // 1. Draw subtle rim line connecting the opening
+        DrawLineEx(leftRim, rightRim, 3.0f, Fade(PURPLE, 0.45f));
+
+        // 2. Draw directional arrow indicating the required entry & shot direction
+        Vector2 arrowStart = { hoop.center.x - shotDir.x * 20.0f, hoop.center.y - shotDir.y * 20.0f };
+        Vector2 arrowTip   = { hoop.center.x + shotDir.x * 16.0f, hoop.center.y + shotDir.y * 16.0f };
+        DrawLineEx(arrowStart, arrowTip, 2.5f, GOLD);
+
+        // Arrowhead wings
+        Vector2 wingBase = { arrowTip.x - shotDir.x * 8.0f, arrowTip.y - shotDir.y * 8.0f };
+        Vector2 wingLeft  = { wingBase.x - tangent.x * 6.0f, wingBase.y - tangent.y * 6.0f };
+        Vector2 wingRight = { wingBase.x + tangent.x * 6.0f, wingBase.y + tangent.y * 6.0f };
+        DrawLineEx(arrowTip, wingLeft, 2.5f, GOLD);
+        DrawLineEx(arrowTip, wingRight, 2.5f, GOLD);
+
+        // 3. Draw the two Purple Rim Dots
+        DrawCircleV(leftRim, hoop.rimRadius, PURPLE);
+        DrawCircleLines((int)leftRim.x, (int)leftRim.y, hoop.rimRadius, BLACK);
+
+        DrawCircleV(rightRim, hoop.rimRadius, PURPLE);
+        DrawCircleLines((int)rightRim.x, (int)rightRim.y, hoop.rimRadius, BLACK);
+    }
 }
 
 void RenderSystem::DrawPlayer(const PlayerData& player) {
@@ -68,13 +94,21 @@ void RenderSystem::DrawBallAndChargeBar(const BallData& ball, const PlayerData& 
 }
 
 void RenderSystem::DrawHUD(const WorldState& world) {
-    DrawText("Move: A/D | Crouch: S | Jump: W/Space | Hold Left Click: Charge & Throw Ball", 20, 20, 20, DARKBLUE);
+    DrawText("Move: A/D | Crouch: S | Jump: W/Space | Hold Left Click: Charge & Throw Ball", 20, 15, 20, DARKBLUE);
+
+    // Hoop Progress Counter Box
+    DrawRectangle(20, 45, 250, 36, Fade(BLACK, 0.55f));
+    DrawRectangleLines(20, 45, 250, 36, PURPLE);
+    DrawText(
+        TextFormat("Hoops Cleared: %d / %d", world.level.hoopsCleared, world.level.totalHoops),
+        32, 53, 20, GOLD
+    );
 
     if (world.level.levelWon) {
         int sw = (int)world.camera.screenWidth;
         int sh = (int)world.camera.screenHeight;
         DrawRectangle(0, 0, sw, sh, Fade(BLACK, 0.6f));
-        DrawText("LEVEL 1 COMPLETE!", sw / 2 - 210, sh / 2 - 40, 40, GREEN);
+        DrawText("ALL HOOPS CLEARED! YOU WIN!", sw / 2 - 300, sh / 2 - 40, 40, GREEN);
         DrawText("Press 'R' to Play Again or 'ESC' to Quit", sw / 2 - 200, sh / 2 + 20, 20, WHITE);
     }
 }

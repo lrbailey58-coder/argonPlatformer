@@ -4,8 +4,8 @@
 
 #include "raylib.h"
 #include <vector>
+#include <cmath>
 
-// Captures hardware inputs for a single frame so physics never calls Raylib input functions directly
 struct InputState {
     bool moveLeft = false;
     bool moveRight = false;
@@ -52,7 +52,7 @@ struct PlayerData {
 struct BallData {
     Vector2 pos;
     Vector2 velocity;
-    float radius = 7.8f; // 1.3x size
+    float radius = 7.8f; // Diameter = 15.6f
     bool isHeld = true;
     bool hasLeftPlayer = false;
 
@@ -64,7 +64,7 @@ struct BallData {
 
     float gravity = 950.0f;
     float bounciness = 0.75f;
-    float groundFriction = 420.0f; // +20% ground friction
+    float groundFriction = 420.0f;
     float airDrag = 20.0f;
 
     void Init(const PlayerData& player) {
@@ -79,9 +79,43 @@ struct BallData {
     }
 };
 
+struct HoopData {
+    Vector2 center;
+    float rotationDeg = 0.0f;  // 0 deg = horizontal hoop, shot from top to bottom
+    float openingWidth = 24.0f; // ~1.54x the ball's 15.6f diameter
+    float rimRadius = 5.0f;     // Radius of each purple rim dot
+    bool cleared = false;
+
+    // Unit vector along the hoop plane (from center toward right rim)
+    Vector2 GetTangent() const {
+        float rad = rotationDeg * DEG2RAD;
+        return { std::cos(rad), std::sin(rad) };
+    }
+
+    // Unit vector pointing in the valid shot/scoring direction (top-to-bottom at 0 deg)
+    Vector2 GetShotDirection() const {
+        float rad = rotationDeg * DEG2RAD;
+        return { -std::sin(rad), std::cos(rad) };
+    }
+
+    Vector2 GetLeftRimPos() const {
+        Vector2 t = GetTangent();
+        float dist = (openingWidth / 2.0f) + rimRadius;
+        return { center.x - t.x * dist, center.y - t.y * dist };
+    }
+
+    Vector2 GetRightRimPos() const {
+        Vector2 t = GetTangent();
+        float dist = (openingWidth / 2.0f) + rimRadius;
+        return { center.x + t.x * dist, center.y + t.y * dist };
+    }
+};
+
 struct LevelData {
     std::vector<Rectangle> platforms;
-    Rectangle flagPole;
+    std::vector<HoopData> hoops;
+    int hoopsCleared = 0;
+    int totalHoops = 0;
     bool levelWon = false;
     float mapWidth = 2400.0f;
     float mapHeight = 1200.0f;
@@ -89,6 +123,7 @@ struct LevelData {
     void Init() {
         levelWon = false;
         platforms.clear();
+        hoops.clear();
 
         // Main Floor
         platforms.push_back({ 0, 1100, mapWidth, 100 });
@@ -113,9 +148,24 @@ struct LevelData {
         platforms.push_back({ 1520, 620, 140, 25 });
         platforms.push_back({ 1750, 500, 180, 25 });
 
-        // Section 4: High Victory Platform & Flag
+        // Section 4: High Platform
         platforms.push_back({ 2020, 400, 300, 40 });
-        flagPole = { 2220, 300, 10, 100 };
+
+        // --- 4 Hoops to Clear ---
+        // Hoop 1: Standard horizontal hoop floating above the ground obstacles (0 deg: shoot top -> bottom)
+        hoops.push_back({ { 430.0f, 880.0f }, 0.0f, 24.0f, 5.0f, false });
+
+        // Hoop 2: Tilted hoop past the low overhang (-35 deg: angled bank/arc shot from upper-left to lower-right)
+        hoops.push_back({ { 1120.0f, 800.0f }, -35.0f, 24.0f, 5.0f, false });
+
+        // Hoop 3: Tilted hoop mid-way up the ascending stairs (25 deg: shoot from upper-right to lower-left)
+        hoops.push_back({ { 1420.0f, 640.0f }, 25.0f, 24.0f, 5.0f, false });
+
+        // Hoop 4: Final hoop high above the summit platform (0 deg: classic basketball arc shot top -> bottom)
+        hoops.push_back({ { 2180.0f, 240.0f }, 0.0f, 24.0f, 5.0f, false });
+
+        hoopsCleared = 0;
+        totalHoops = (int)hoops.size();
     }
 };
 
@@ -138,7 +188,6 @@ struct CameraData {
     }
 };
 
-// The single root container holding the entire game state
 struct WorldState {
     InputState input;
     PlayerData player;
