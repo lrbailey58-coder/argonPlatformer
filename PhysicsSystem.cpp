@@ -6,7 +6,7 @@
 void PhysicsSystem::UpdateWorld(float dt, WorldState& world) {
     if (world.level.levelWon) {
         if (world.input.resetPressed) {
-            world.Init(world.camera.screenWidth, world.camera.screenHeight);
+            world.Init((float)GetScreenWidth(), (float)GetScreenHeight());
             UpdateCamera(0.0f, world);
         }
         return;
@@ -15,7 +15,7 @@ void PhysicsSystem::UpdateWorld(float dt, WorldState& world) {
     // 1. Update Ball state (charging, firing, bouncing, and hoop scoring)
     UpdateBall(dt, world.ball, world.player, world.level, world.input);
 
-    // 2. Update Player physics and movement (Player does not collide with hoops)
+    // 2. Update Player physics and movement
     UpdatePlayer(dt, world.player, world.input, world.level.platforms);
 
     // 3. Re-sync held ball indicator to the player's new post-movement position
@@ -26,7 +26,6 @@ void PhysicsSystem::UpdateWorld(float dt, WorldState& world) {
 }
 
 void PhysicsSystem::UpdatePlayer(float dt, PlayerData& player, const InputState& input, const std::vector<Rectangle>& platforms) {
-    // 1. Crouch Logic
     if (input.crouchHeld && !player.isCrouching) {
         player.rect.y += (player.normalHeight - player.crouchHeight);
         player.rect.height = player.crouchHeight;
@@ -52,7 +51,6 @@ void PhysicsSystem::UpdatePlayer(float dt, PlayerData& player, const InputState&
         }
     }
 
-    // 2. Coyote Timer & Grounded Takeoff Speed Memory
     if (player.isGrounded) {
         player.coyoteTimer = player.coyoteTimeDuration;
         player.airSpeed = player.isCrouching ? player.crouchSpeed : player.moveSpeed;
@@ -60,7 +58,6 @@ void PhysicsSystem::UpdatePlayer(float dt, PlayerData& player, const InputState&
         player.coyoteTimer -= dt;
     }
 
-    // 3. Horizontal Movement (Locked on ground while charging; preserves air momentum)
     if (player.isCharging) {
         if (player.isGrounded) {
             player.velocity.x = 0.0f;
@@ -72,7 +69,6 @@ void PhysicsSystem::UpdatePlayer(float dt, PlayerData& player, const InputState&
         if (input.moveRight) player.velocity.x += currentSpeed;
     }
 
-    // 4. Jump Buffering, Coyote Jump & Variable Jump Height
     if (input.jumpPressed) {
         player.jumpBufferTimer = player.jumpBufferDuration;
     } else {
@@ -90,10 +86,8 @@ void PhysicsSystem::UpdatePlayer(float dt, PlayerData& player, const InputState&
         player.velocity.y *= 0.5f;
     }
 
-    // 5. Apply Gravity
     player.velocity.y += player.gravity * dt;
 
-    // 6. Move Horizontally & Resolve X Collisions
     player.rect.x += player.velocity.x * dt;
     for (const auto& plat : platforms) {
         if (CheckCollisionRecs(player.rect, plat)) {
@@ -107,7 +101,6 @@ void PhysicsSystem::UpdatePlayer(float dt, PlayerData& player, const InputState&
         }
     }
 
-    // 7. Move Vertically & Resolve Y Collisions
     player.rect.y += player.velocity.y * dt;
     player.isGrounded = false;
     for (const auto& plat : platforms) {
@@ -205,12 +198,10 @@ void PhysicsSystem::ResolveBallCircleCollision(BallData& ball, Vector2 circleCen
         float dist = std::sqrt(distSq);
         Vector2 normal = (dist > 0.0001f) ? Vector2{ dx / dist, dy / dist } : Vector2{ 0.0f, -1.0f };
 
-        // Push the ball out of the purple rim circle
         float overlap = minDist - dist;
         ball.pos.x += normal.x * overlap;
         ball.pos.y += normal.y * overlap;
 
-        // Reflect velocity vector off the circular rim
         float velDotNormal = ball.velocity.x * normal.x + ball.velocity.y * normal.y;
         if (velDotNormal < 0.0f) {
             ball.velocity.x -= (1.0f + ball.bounciness) * velDotNormal * normal.x;
@@ -222,28 +213,22 @@ void PhysicsSystem::ResolveBallCircleCollision(BallData& ball, Vector2 circleCen
 void PhysicsSystem::HandleHoopInteraction(BallData& ball, Vector2 prevBallPos, HoopData& hoop, LevelData& level) {
     if (hoop.cleared) return;
 
-    // 1. Bounce the ball off the two circular purple rim dots
     ResolveBallCircleCollision(ball, hoop.GetLeftRimPos(), hoop.rimRadius);
     ResolveBallCircleCollision(ball, hoop.GetRightRimPos(), hoop.rimRadius);
 
-    // 2. Compute ball coordinates in the hoop's local rotated reference frame
     Vector2 tangent = hoop.GetTangent();
-    Vector2 shotDir = hoop.GetShotDirection(); // Valid scoring direction
+    Vector2 shotDir = hoop.GetShotDirection();
 
     Vector2 relPrev = { prevBallPos.x - hoop.center.x, prevBallPos.y - hoop.center.y };
     Vector2 relCurr = { ball.pos.x - hoop.center.x, ball.pos.y - hoop.center.y };
 
-    // Signed distance along the shot direction (negative = entry/top side, positive = exit/bottom side)
     float prevNormalDist = relPrev.x * shotDir.x + relPrev.y * shotDir.y;
     float currNormalDist = relCurr.x * shotDir.x + relCurr.y * shotDir.y;
 
-    // Lateral distance from the center of the hoop opening
     float currTangentDist = relCurr.x * tangent.x + relCurr.y * tangent.y;
     float halfOpening = hoop.openingWidth / 2.0f;
 
-    // Check if the ball is laterally within the hoop's opening
     if (std::fabs(currTangentDist) <= halfOpening) {
-        // Case A: Ball crosses the hoop center-line in the VALID direction (from <= 0 to > 0)
         if (prevNormalDist <= 0.0f && currNormalDist > 0.0f) {
             hoop.cleared = true;
             level.hoopsCleared++;
@@ -253,16 +238,12 @@ void PhysicsSystem::HandleHoopInteraction(BallData& ball, Vector2 prevBallPos, H
             return;
         }
 
-        // Case B: One-way block! If the ball approaches from the WRONG side (currNormalDist > 0)
-        // and tries to enter the hoop opening moving against shotDir, bounce it back out!
         float velAlongShot = ball.velocity.x * shotDir.x + ball.velocity.y * shotDir.y;
         if (prevNormalDist > 0.0f && currNormalDist < ball.radius && velAlongShot < 0.0f) {
-            // Push ball flush to the back/bottom of the hoop plane
             float pushOut = ball.radius - currNormalDist;
             ball.pos.x += shotDir.x * pushOut;
             ball.pos.y += shotDir.y * pushOut;
 
-            // Reflect velocity component along the hoop normal
             ball.velocity.x -= (1.0f + ball.bounciness) * velAlongShot * shotDir.x;
             ball.velocity.y -= (1.0f + ball.bounciness) * velAlongShot * shotDir.y;
         }
@@ -290,14 +271,22 @@ void PhysicsSystem::UpdateBall(float dt, BallData& ball, PlayerData& player, Lev
 
         if (input.chargeHeld) {
             player.isCharging = true;
-            ball.chargeTimer += dt;
+            ball.holdTimer += dt;
 
-            if (ball.chargeTimer >= ball.maxHoldTime) {
+            if (!input.pauseChargeHeld) {
+                ball.chargeTimer += dt;
+            }
+
+            if (ball.holdTimer >= ball.maxHoldTime) {
+                float powerRatio = std::clamp(ball.chargeTimer / ball.maxPowerTime, 0.0f, 1.0f);
+                float throwSpeed = ball.minThrowSpeed + powerRatio * (ball.maxThrowSpeed - ball.minThrowSpeed);
+
                 ball.isHeld = false;
                 player.isCharging = false;
                 ball.hasLeftPlayer = !CheckCollisionCircleRec(ball.pos, ball.radius, player.rect);
-                ball.velocity = { dir.x * ball.maxThrowSpeed, dir.y * ball.maxThrowSpeed };
+                ball.velocity = { dir.x * throwSpeed, dir.y * throwSpeed };
                 ball.chargeTimer = 0.0f;
+                ball.holdTimer = 0.0f;
             }
         } else if (player.isCharging) {
             float powerRatio = std::clamp(ball.chargeTimer / ball.maxPowerTime, 0.0f, 1.0f);
@@ -308,6 +297,7 @@ void PhysicsSystem::UpdateBall(float dt, BallData& ball, PlayerData& player, Lev
             ball.hasLeftPlayer = !CheckCollisionCircleRec(ball.pos, ball.radius, player.rect);
             ball.velocity = { dir.x * throwSpeed, dir.y * throwSpeed };
             ball.chargeTimer = 0.0f;
+            ball.holdTimer = 0.0f;
         }
     } else {
         player.isCharging = false;
@@ -330,17 +320,14 @@ void PhysicsSystem::UpdateBall(float dt, BallData& ball, PlayerData& player, Lev
             ball.pos.x += ball.velocity.x * subDt;
             ball.pos.y += ball.velocity.y * subDt;
 
-            // 1. Platform Collisions
             for (const auto& plat : platforms) {
                 ResolveBallPlatformCollision(ball, plat);
             }
 
-            // 2. Hoop Collisions & One-Way Scoring (Only when ball is thrown!)
             for (auto& hoop : level.hoops) {
                 HandleHoopInteraction(ball, prevBallPos, hoop, level);
             }
 
-            // 3. Player Hitbox-Exit & Pickup Check
             if (!ball.hasLeftPlayer) {
                 if (!CheckCollisionCircleRec(ball.pos, ball.radius, player.rect)) {
                     ball.hasLeftPlayer = true;
@@ -351,6 +338,7 @@ void PhysicsSystem::UpdateBall(float dt, BallData& ball, PlayerData& player, Lev
                     ball.hasLeftPlayer = false;
                     ball.velocity = { 0.0f, 0.0f };
                     ball.chargeTimer = 0.0f;
+                    ball.holdTimer = 0.0f;
                     SyncBallWithPlayer(ball, player, input.mouseWorldPos, platforms);
                     break;
                 }
@@ -402,10 +390,11 @@ void PhysicsSystem::UpdateCamera(float dt, WorldState& world) {
     }
     camData.cam.target.y += diffY * camData.baseFollowSpeed * dt;
 
-    float minCamX = camData.screenWidth / 2.0f;
-    float maxCamX = world.level.mapWidth - (camData.screenWidth / 2.0f);
-    float minCamY = camData.screenHeight / 2.0f;
-    float maxCamY = world.level.mapHeight - (camData.screenHeight / 2.0f);
+    // Clamp using the zoomed world-space view dimensions so fullscreen edges never show outside the map
+    float minCamX = camData.viewWorldWidth / 2.0f;
+    float maxCamX = world.level.mapWidth - (camData.viewWorldWidth / 2.0f);
+    float minCamY = camData.viewWorldHeight / 2.0f;
+    float maxCamY = world.level.mapHeight - (camData.viewWorldHeight / 2.0f);
 
     if (maxCamX >= minCamX) camData.cam.target.x = std::clamp(camData.cam.target.x, minCamX, maxCamX);
     if (maxCamY >= minCamY) camData.cam.target.y = std::clamp(camData.cam.target.y, minCamY, maxCamY);

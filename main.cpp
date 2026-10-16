@@ -6,15 +6,18 @@
 #include "RenderSystem.h"
 
 int main() {
-    const float screenWidth = 960.0f;
-    const float screenHeight = 600.0f;
+    const int windowedWidth = 960;
+    const int windowedHeight = 600;
 
-    InitWindow((int)screenWidth, (int)screenHeight, "Argon Platformer - Level 1");
+    InitWindow(windowedWidth, windowedHeight, "Argon Platformer - Level 1");
     SetTargetFPS(60);
 
-    // 1. Initialize the Model (WorldState)
+    // Launch immediately in smooth Windows 11 Fullscreen (press F11 anytime to toggle windowed)
+    ToggleBorderlessWindowed();
+
+    // 1. Initialize the Model (WorldState) using the current screen resolution
     WorldState world;
-    world.Init(screenWidth, screenHeight);
+    world.Init((float)GetScreenWidth(), (float)GetScreenHeight());
     PhysicsSystem::UpdateCamera(0.0f, world);
 
     // 2. Main Game Loop: Input -> Physics (Controller) -> Render (View)

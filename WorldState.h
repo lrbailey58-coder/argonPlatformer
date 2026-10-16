@@ -5,6 +5,7 @@
 #include "raylib.h"
 #include <vector>
 #include <cmath>
+#include <algorithm>
 
 struct InputState {
     bool moveLeft = false;
@@ -13,7 +14,9 @@ struct InputState {
     bool jumpPressed = false;
     bool jumpHeld = false;
     bool chargeHeld = false;
+    bool pauseChargeHeld = false;
     bool resetPressed = false;
+    bool toggleFullscreenPressed = false; // F11 to toggle Fullscreen / Windowed
     Vector2 mouseWorldPos = { 0.0f, 0.0f };
 };
 
@@ -57,20 +60,22 @@ struct BallData {
     bool hasLeftPlayer = false;
 
     float chargeTimer = 0.0f;
-    float maxPowerTime = 2.0f;
-    float maxHoldTime = 5.0f;
+    float holdTimer = 0.0f;
+    float maxPowerTime = 1.5f;
+    float maxHoldTime = 3.0f;
     float minThrowSpeed = 250.0f;
-    float maxThrowSpeed = 1100.0f;
+    float maxThrowSpeed = 900.0f;
 
     float gravity = 950.0f;
     float bounciness = 0.75f;
-    float groundFriction = 420.0f;
-    float airDrag = 20.0f;
+    float groundFriction = 750.0f;
+    float airDrag = 60.0f;
 
     void Init(const PlayerData& player) {
         isHeld = true;
         hasLeftPlayer = false;
         chargeTimer = 0.0f;
+        holdTimer = 0.0f;
         velocity = { 0.0f, 0.0f };
         pos = {
             player.rect.x + player.rect.width / 2.0f,
@@ -81,18 +86,16 @@ struct BallData {
 
 struct HoopData {
     Vector2 center;
-    float rotationDeg = 0.0f;  // 0 deg = horizontal hoop, shot from top to bottom
-    float openingWidth = 24.0f; // ~1.54x the ball's 15.6f diameter
-    float rimRadius = 5.0f;     // Radius of each purple rim dot
+    float rotationDeg = 0.0f;
+    float openingWidth = 24.0f;
+    float rimRadius = 5.0f;
     bool cleared = false;
 
-    // Unit vector along the hoop plane (from center toward right rim)
     Vector2 GetTangent() const {
         float rad = rotationDeg * DEG2RAD;
         return { std::cos(rad), std::sin(rad) };
     }
 
-    // Unit vector pointing in the valid shot/scoring direction (top-to-bottom at 0 deg)
     Vector2 GetShotDirection() const {
         float rad = rotationDeg * DEG2RAD;
         return { -std::sin(rad), std::cos(rad) };
@@ -152,16 +155,9 @@ struct LevelData {
         platforms.push_back({ 2020, 400, 300, 40 });
 
         // --- 4 Hoops to Clear ---
-        // Hoop 1: Standard horizontal hoop floating above the ground obstacles (0 deg: shoot top -> bottom)
         hoops.push_back({ { 430.0f, 880.0f }, 0.0f, 24.0f, 5.0f, false });
-
-        // Hoop 2: Tilted hoop past the low overhang (-35 deg: angled bank/arc shot from upper-left to lower-right)
         hoops.push_back({ { 1120.0f, 800.0f }, -35.0f, 24.0f, 5.0f, false });
-
-        // Hoop 3: Tilted hoop mid-way up the ascending stairs (25 deg: shoot from upper-right to lower-left)
         hoops.push_back({ { 1420.0f, 640.0f }, 25.0f, 24.0f, 5.0f, false });
-
-        // Hoop 4: Final hoop high above the summit platform (0 deg: classic basketball arc shot top -> bottom)
         hoops.push_back({ { 2180.0f, 240.0f }, 0.0f, 24.0f, 5.0f, false });
 
         hoopsCleared = 0;
@@ -171,20 +167,33 @@ struct LevelData {
 
 struct CameraData {
     Camera2D cam;
-    float screenWidth = 960.0f;
-    float screenHeight = 600.0f;
+    // Virtual design resolution (keeps field-of-view consistent across any monitor size)
+    float virtualWidth = 960.0f;
+    float virtualHeight = 600.0f;
+
+    // Visible world-space dimensions after zoom is applied
+    float viewWorldWidth = 960.0f;
+    float viewWorldHeight = 600.0f;
+
     float centerBoxWidth = 240.0f;
     float centerBoxHeight = 150.0f;
     float baseFollowSpeed = 1.5f;
     float borderPushSpeed = 10.0f;
 
-    void Init(float screenW, float screenH, Vector2 startPos) {
-        screenWidth = screenW;
-        screenHeight = screenH;
-        cam.offset = { screenWidth / 2.0f, screenHeight / 2.0f };
+    void Init(float actualScreenW, float actualScreenH, Vector2 startPos) {
         cam.target = startPos;
         cam.rotation = 0.0f;
-        cam.zoom = 1.0f;
+        UpdateViewport(actualScreenW, actualScreenH);
+    }
+
+    void UpdateViewport(float actualScreenW, float actualScreenH) {
+        cam.offset = { actualScreenW / 2.0f, actualScreenH / 2.0f };
+        float scaleX = actualScreenW / virtualWidth;
+        float scaleY = actualScreenH / virtualHeight;
+        // Scale zoom so the camera never shows more world than our 960x600 design view
+        cam.zoom = std::max(scaleX, scaleY);
+        viewWorldWidth = actualScreenW / cam.zoom;
+        viewWorldHeight = actualScreenH / cam.zoom;
     }
 };
 
@@ -195,11 +204,11 @@ struct WorldState {
     LevelData level;
     CameraData camera;
 
-    void Init(float screenW, float screenH) {
+    void Init(float actualScreenW, float actualScreenH) {
         level.Init();
         player.Init(80.0f, 1000.0f);
         ball.Init(player);
-        camera.Init(screenW, screenH, { player.rect.x, player.rect.y });
+        camera.Init(actualScreenW, actualScreenH, { player.rect.x, player.rect.y });
     }
 };
 

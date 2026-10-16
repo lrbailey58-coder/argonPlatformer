@@ -12,7 +12,7 @@ private:
     static void DrawLevel(const LevelData& level);
     static void DrawHoops(const LevelData& level);
     static void DrawPlayer(const PlayerData& player);
-    static void DrawBallAndChargeBar(const BallData& ball, const PlayerData& player);
+    static void DrawBallAndChargeBar(const WorldState& world);
     static void DrawHUD(const WorldState& world);
 };
 
